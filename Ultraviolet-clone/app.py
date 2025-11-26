@@ -701,15 +701,15 @@ def rewrite_html(html: str, base_url: str) -> str:
     
     # Inject client-side scripts for dynamic content handling
     if CONFIG['inject_scripts']:
-        injection = BeautifulSoup(get_injection_script(base_url), 'lxml')
-        script_tag = injection.find('script')
-        if script_tag:
-            if soup.head:
-                soup.head.insert(0, script_tag)
-            elif soup.html:
-                soup.html.insert(0, script_tag)
-            else:
-                soup.insert(0, script_tag)
+        injection = BeautifulSoup(get_injection_script(base_url), 'html.parser')
+        script_tags = injection.find_all('script')
+        
+        # Insert scripts at the beginning of head or html
+        target = soup.head if soup.head else (soup.html if soup.html else soup)
+        
+        # Insert in reverse order so they appear in correct order
+        for script_tag in reversed(script_tags):
+            target.insert(0, script_tag)
     
     return str(soup)
 
@@ -717,28 +717,34 @@ def rewrite_html(html: str, base_url: str) -> str:
 def proxy_request(url: str, method: str = 'GET', headers: dict = None, data=None, cookies=None):
     """Make a proxied request to the target URL."""
     try:
-        # Prepare headers
-        proxy_headers = dict(session.headers)
-        
-        # Forward relevant headers from client
-        forward_headers = [
-            'accept', 'accept-language', 'content-type', 'range', 
-            'if-none-match', 'if-modified-since', 'cache-control',
-            'x-requested-with'
-        ]
-        for header in forward_headers:
-            if header in request.headers:
-                proxy_headers[header] = request.headers[header]
-        
-        # Parse target URL for referer/origin
+        # Parse target URL
         parsed = urlparse(url)
         origin = f"{parsed.scheme}://{parsed.netloc}"
-        proxy_headers['Referer'] = url
-        proxy_headers['Origin'] = origin
-        proxy_headers['Host'] = parsed.netloc
         
-        # Make request
-        response = session.request(
+        # Prepare headers - mimic a real browser
+        proxy_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'identity',  # Don't request compression to simplify handling
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+            'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1',
+        }
+        
+        # Forward content-type for POST requests
+        if 'content-type' in request.headers:
+            proxy_headers['Content-Type'] = request.headers['content-type']
+        
+        # Make request without using session to avoid cookie accumulation issues
+        response = requests.request(
             method=method,
             url=url,
             headers=proxy_headers,
@@ -751,7 +757,7 @@ def proxy_request(url: str, method: str = 'GET', headers: dict = None, data=None
         
         return response
     except requests.exceptions.RequestException as e:
-        print(f"Proxy request error: {e}")
+        print(f"Proxy request error for {url}: {e}")
         return None
 
 
@@ -944,6 +950,42 @@ def proxy(encoded_url: str):
         for cookie in response.cookies:
             resp.set_cookie(cookie.name, cookie.value, path='/')
         return resp
+
+
+# Store the last visited URL for relative path resolution
+LAST_VISITED_URL = {}
+
+
+@app.route('/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'])
+def catch_all(path):
+    """Catch-all route for relative URLs that weren't rewritten properly."""
+    # Skip static files and known routes
+    if path.startswith('static/') or path.startswith('service/'):
+        return Response('Not found', status=404)
+    
+    # Get the referer to determine the original site
+    referer = request.headers.get('Referer', '')
+    
+    if referer and '/service/' in referer:
+        # Extract the encoded URL from referer
+        try:
+            referer_path = urlparse(referer).path
+            if referer_path.startswith('/service/'):
+                encoded = referer_path[len('/service/'):]
+                base_url = decode_url(encoded)
+                if base_url:
+                    # Build absolute URL
+                    full_url = urljoin(base_url, '/' + path)
+                    if request.query_string:
+                        full_url += '?' + request.query_string.decode('utf-8')
+                    
+                    # Redirect to proxied URL
+                    encoded_url = encode_url(full_url)
+                    return redirect(f"{CONFIG['prefix']}{encoded_url}")
+        except Exception as e:
+            print(f"Catch-all error: {e}")
+    
+    return Response('Resource not found', status=404)
 
 
 @app.errorhandler(404)

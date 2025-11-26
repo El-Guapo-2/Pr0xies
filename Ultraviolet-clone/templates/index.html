@@ -39,6 +39,14 @@
         <div class="quick-links">
             <h3>Quick Links</h3>
             <div class="links-grid">
+                <a href="/search?url=https://www.google.com" class="quick-link">
+                    <span class="icon">🔍</span>
+                    <span>Google</span>
+                </a>
+                <a href="/search?url=https://www.bing.com" class="quick-link">
+                    <span class="icon">🅱️</span>
+                    <span>Bing</span>
+                </a>
                 <a href="/search?url=https://duckduckgo.com" class="quick-link">
                     <span class="icon">🦆</span>
                     <span>DuckDuckGo</span>
@@ -117,10 +125,11 @@
                 // Direct URL
                 url = input.startsWith('http') ? input : 'https://' + input;
             } else if (engine === 'duckduckgo') {
-                url = 'https://duckduckgo.com/?q=' + encodeURIComponent(input);
+                // Use DuckDuckGo lite for better proxy compatibility
+                url = 'https://lite.duckduckgo.com/lite/?q=' + encodeURIComponent(input);
             } else if (engine === 'google') {
-                // Use Google's HTML-only version to avoid some captcha issues
-                url = 'https://www.google.com/search?q=' + encodeURIComponent(input) + '&gbv=1';
+                // Use Google's basic HTML version
+                url = 'https://www.google.com/search?q=' + encodeURIComponent(input) + '&udm=14';
             } else if (engine === 'bing') {
                 url = 'https://www.bing.com/search?q=' + encodeURIComponent(input);
             }
