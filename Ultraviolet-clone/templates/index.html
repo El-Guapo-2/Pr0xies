@@ -14,12 +14,13 @@
         </div>
         
         <div class="search-container">
-            <form action="/search" method="GET" class="search-form">
+            <form action="/search" method="GET" class="search-form" id="mainSearchForm">
                 <input 
                     type="text" 
                     name="url" 
                     placeholder="Enter URL or search term..." 
                     class="search-input"
+                    id="searchInput"
                     autocomplete="off"
                     autofocus
                 >
@@ -27,14 +28,20 @@
                     <span>Go</span>
                 </button>
             </form>
+            <div class="search-options">
+                <label><input type="radio" name="searchEngine" value="direct" checked> Direct URL</label>
+                <label><input type="radio" name="searchEngine" value="duckduckgo"> DuckDuckGo</label>
+                <label><input type="radio" name="searchEngine" value="google"> Google</label>
+                <label><input type="radio" name="searchEngine" value="bing"> Bing</label>
+            </div>
         </div>
         
         <div class="quick-links">
             <h3>Quick Links</h3>
             <div class="links-grid">
-                <a href="/search?url=https://www.google.com" class="quick-link">
-                    <span class="icon">🔍</span>
-                    <span>Google</span>
+                <a href="/search?url=https://duckduckgo.com" class="quick-link">
+                    <span class="icon">🦆</span>
+                    <span>DuckDuckGo</span>
                 </a>
                 <a href="/search?url=https://www.youtube.com" class="quick-link">
                     <span class="icon">▶️</span>
@@ -69,8 +76,8 @@
                 <p>Optimized for speed with minimal latency</p>
             </div>
             <div class="info-card">
-                <h4>🌍 Access</h4>
-                <p>Bypass restrictions and access content freely</p>
+                <h4>💡 Tip</h4>
+                <p>Use DuckDuckGo for best search experience (no CAPTCHA)</p>
             </div>
         </div>
         
@@ -90,6 +97,36 @@
                 console.error('[UV] Service Worker registration failed:', error);
             });
         }
+        
+        // Handle search form with engine selection
+        document.getElementById('mainSearchForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const input = document.getElementById('searchInput').value.trim();
+            const engine = document.querySelector('input[name="searchEngine"]:checked').value;
+            
+            if (!input) return;
+            
+            let url;
+            
+            // Check if input looks like a URL
+            const isUrl = input.includes('.') && !input.includes(' ') || 
+                          input.startsWith('http://') || 
+                          input.startsWith('https://');
+            
+            if (engine === 'direct' || isUrl) {
+                // Direct URL
+                url = input.startsWith('http') ? input : 'https://' + input;
+            } else if (engine === 'duckduckgo') {
+                url = 'https://duckduckgo.com/?q=' + encodeURIComponent(input);
+            } else if (engine === 'google') {
+                // Use Google's HTML-only version to avoid some captcha issues
+                url = 'https://www.google.com/search?q=' + encodeURIComponent(input) + '&gbv=1';
+            } else if (engine === 'bing') {
+                url = 'https://www.bing.com/search?q=' + encodeURIComponent(input);
+            }
+            
+            window.location.href = '/search?url=' + encodeURIComponent(url);
+        });
     </script>
     <script src="/static/script.js"></script>
 </body>

@@ -99,6 +99,66 @@ def rewrite_css(css: str, base_url: str) -> str:
     return css
 
 
+def rewrite_javascript(js: str, base_url: str) -> str:
+    """Rewrite JavaScript to intercept location and other browser APIs."""
+    parsed = urlparse(base_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    
+    # Prepend UV interception code that wraps common patterns
+    prefix = f'''
+/* UV Proxy Injection */
+(function() {{
+    if (window.__uv_js_rewritten) return;
+    window.__uv_js_rewritten = true;
+    
+    const UV_ORIGIN = "{origin}";
+    const UV_URL = "{base_url}";
+    const UV_HOST = "{parsed.netloc}";
+    const UV_HOSTNAME = "{parsed.hostname}";
+    const UV_PROTOCOL = "{parsed.scheme}:";
+    
+    // Store original values
+    const _location = window.location;
+    const _parent = window.parent;
+    const _top = window.top;
+    
+    // Create location spoof
+    window.__uv_location = {{
+        get href() {{ return UV_URL; }},
+        set href(v) {{ _location.href = window.__uv_encodeUrl(v); }},
+        get origin() {{ return UV_ORIGIN; }},
+        get host() {{ return UV_HOST; }},
+        get hostname() {{ return UV_HOSTNAME; }},
+        get protocol() {{ return UV_PROTOCOL; }},
+        get pathname() {{ return new URL(UV_URL).pathname; }},
+        get search() {{ return new URL(UV_URL).search; }},
+        get hash() {{ return _location.hash; }},
+        get port() {{ return new URL(UV_URL).port; }},
+        assign: function(u) {{ _location.assign(window.__uv_encodeUrl(u)); }},
+        replace: function(u) {{ _location.replace(window.__uv_encodeUrl(u)); }},
+        reload: function(f) {{ _location.reload(f); }},
+        toString: function() {{ return UV_URL; }}
+    }};
+    
+    // Encode URL function
+    window.__uv_encodeUrl = function(url) {{
+        if (!url) return url;
+        try {{
+            const absolute = new URL(url, UV_URL).href;
+            const encoded = btoa(unescape(encodeURIComponent(absolute)))
+                .replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=/g, '');
+            return '/service/' + encoded;
+        }} catch(e) {{
+            return url;
+        }}
+    }};
+}})();
+/* End UV Proxy Injection */
+'''
+    
+    return prefix + js
+
+
 def get_injection_script(base_url: str) -> str:
     """Get the client-side injection script with service worker registration."""
     parsed = urlparse(base_url)
@@ -540,6 +600,45 @@ def rewrite_html(html: str, base_url: str) -> str:
     for base in soup.find_all('base'):
         base.decompose()
     
+    # Remove reCAPTCHA and other anti-bot scripts that won't work through proxy
+    recaptcha_patterns = [
+        re.compile(r'recaptcha', re.I),
+        re.compile(r'captcha', re.I),
+        re.compile(r'grecaptcha', re.I),
+        re.compile(r'hcaptcha', re.I),
+        re.compile(r'challenge', re.I),
+    ]
+    
+    # Remove reCAPTCHA script tags
+    for script in soup.find_all('script'):
+        src = script.get('src', '')
+        text = script.string or ''
+        if any(pattern.search(src) or pattern.search(text) for pattern in recaptcha_patterns):
+            script.decompose()
+            continue
+        # Also check for google recaptcha API
+        if 'www.google.com/recaptcha' in src or 'www.gstatic.com/recaptcha' in src:
+            script.decompose()
+            continue
+    
+    # Remove reCAPTCHA divs and iframes
+    for element in soup.find_all(['div', 'iframe', 'span']):
+        classes = element.get('class', [])
+        element_id = element.get('id', '')
+        src = element.get('src', '')
+        
+        class_str = ' '.join(classes) if isinstance(classes, list) else str(classes)
+        
+        if any(pattern.search(class_str) or pattern.search(element_id) or pattern.search(src) 
+               for pattern in recaptcha_patterns):
+            element.decompose()
+    
+    # Remove noscript tags that might contain captcha fallbacks
+    for noscript in soup.find_all('noscript'):
+        content = str(noscript)
+        if any(pattern.search(content) for pattern in recaptcha_patterns):
+            noscript.decompose()
+    
     # Rewrite various HTML attributes containing URLs
     url_attributes = {
         'a': ['href'],
@@ -678,6 +777,31 @@ def search():
     return redirect(f"{CONFIG['prefix']}{encoded}")
 
 
+# Cookie storage per domain
+DOMAIN_COOKIES = {}
+
+
+def get_domain_key(url: str) -> str:
+    """Get domain key for cookie storage."""
+    parsed = urlparse(url)
+    return parsed.netloc
+
+
+def store_cookies_for_domain(url: str, cookies):
+    """Store cookies for a specific domain."""
+    domain_key = get_domain_key(url)
+    if domain_key not in DOMAIN_COOKIES:
+        DOMAIN_COOKIES[domain_key] = {}
+    for cookie in cookies:
+        DOMAIN_COOKIES[domain_key][cookie.name] = cookie.value
+
+
+def get_cookies_for_domain(url: str) -> dict:
+    """Get stored cookies for a domain."""
+    domain_key = get_domain_key(url)
+    return DOMAIN_COOKIES.get(domain_key, {})
+
+
 @app.route(f"{CONFIG['prefix']}<path:encoded_url>", methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'])
 def proxy(encoded_url: str):
     """Main proxy endpoint."""
@@ -695,6 +819,8 @@ def proxy(encoded_url: str):
     if not target_url.startswith(('http://', 'https://')):
         return Response('Invalid URL', status=400)
     
+    parsed_target = urlparse(target_url)
+    
     # Get request data for POST/PUT
     data = None
     if request.method in ['POST', 'PUT', 'PATCH']:
@@ -706,10 +832,16 @@ def proxy(encoded_url: str):
         else:
             data = request.get_data()
     
-    # Forward cookies
-    cookies = {}
+    # Get domain-specific cookies
+    cookies = get_cookies_for_domain(target_url)
+    
+    # Also include cookies from request that match the domain pattern
+    domain_key = get_domain_key(target_url)
     for cookie_name, cookie_value in request.cookies.items():
-        if not cookie_name.startswith('_'):
+        if cookie_name.startswith(f'_uv_{domain_key}_'):
+            actual_name = cookie_name[len(f'_uv_{domain_key}_'):]
+            cookies[actual_name] = cookie_value
+        elif not cookie_name.startswith('_'):
             cookies[cookie_name] = cookie_value
     
     # Make the proxied request
@@ -726,10 +858,14 @@ def proxy(encoded_url: str):
             encoded = encode_url(new_url)
             return redirect(f"{CONFIG['prefix']}{encoded}", code=response.status_code)
     
+    # Store cookies from response
+    if response.cookies:
+        store_cookies_for_domain(target_url, response.cookies)
+    
     # Get content type
     content_type = response.headers.get('Content-Type', 'text/html')
     
-    # Prepare response headers
+    # Prepare response headers - explicitly remove security headers
     resp_headers = {}
     safe_headers = ['content-language', 'cache-control', 'expires', 'pragma', 'last-modified', 'etag', 'accept-ranges']
     for header in safe_headers:
@@ -748,12 +884,24 @@ def proxy(encoded_url: str):
         
         resp = make_response(modified_content, response.status_code)
         resp.headers['Content-Type'] = content_type
+        # Remove security headers that break proxying
+        resp.headers['X-Frame-Options'] = 'ALLOWALL'
+        resp.headers['Access-Control-Allow-Origin'] = '*'
         for k, v in resp_headers.items():
             resp.headers[k] = v
         
-        # Forward cookies from target
+        # Forward cookies with domain prefix for proper isolation
+        domain_key = get_domain_key(target_url)
         for cookie in response.cookies:
-            resp.set_cookie(cookie.name, cookie.value, max_age=cookie.expires, path='/', secure=False, httponly=False)
+            resp.set_cookie(
+                f'_uv_{domain_key}_{cookie.name}',
+                cookie.value,
+                max_age=cookie.expires if cookie.expires else 86400*30,
+                path='/',
+                secure=False,
+                httponly=False,
+                samesite='Lax'
+            )
         
         return resp
     
@@ -764,9 +912,24 @@ def proxy(encoded_url: str):
         resp.headers['Content-Type'] = content_type
         return resp
     
-    elif 'javascript' in content_type or 'application/json' in content_type:
+    elif 'javascript' in content_type:
+        # Rewrite JavaScript to intercept location/origin checks
+        try:
+            js_content = response.content.decode('utf-8', errors='replace')
+            js_content = rewrite_javascript(js_content, target_url)
+            resp = make_response(js_content, response.status_code)
+        except:
+            resp = make_response(response.content, response.status_code)
+        resp.headers['Content-Type'] = content_type
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        for k, v in resp_headers.items():
+            resp.headers[k] = v
+        return resp
+    
+    elif 'application/json' in content_type:
         resp = make_response(response.content, response.status_code)
         resp.headers['Content-Type'] = content_type
+        resp.headers['Access-Control-Allow-Origin'] = '*'
         for k, v in resp_headers.items():
             resp.headers[k] = v
         return resp
