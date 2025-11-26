@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ultraviolet Proxy</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌐 Ultraviolet</h1>
+            <p class="subtitle">Fast, secure web proxy</p>
+        </div>
+        
+        <div class="search-container">
+            <form action="/search" method="GET" class="search-form">
+                <input 
+                    type="text" 
+                    name="url" 
+                    placeholder="Enter URL or search term..." 
+                    class="search-input"
+                    autocomplete="off"
+                    autofocus
+                >
+                <button type="submit" class="search-button">
+                    <span>Go</span>
+                </button>
+            </form>
+        </div>
+        
+        <div class="quick-links">
+            <h3>Quick Links</h3>
+            <div class="links-grid">
+                <a href="/search?url=https://www.google.com" class="quick-link">
+                    <span class="icon">🔍</span>
+                    <span>Google</span>
+                </a>
+                <a href="/search?url=https://www.youtube.com" class="quick-link">
+                    <span class="icon">▶️</span>
+                    <span>YouTube</span>
+                </a>
+                <a href="/search?url=https://www.wikipedia.org" class="quick-link">
+                    <span class="icon">📚</span>
+                    <span>Wikipedia</span>
+                </a>
+                <a href="/search?url=https://www.reddit.com" class="quick-link">
+                    <span class="icon">📱</span>
+                    <span>Reddit</span>
+                </a>
+                <a href="/search?url=https://www.twitter.com" class="quick-link">
+                    <span class="icon">🐦</span>
+                    <span>Twitter</span>
+                </a>
+                <a href="/search?url=https://www.github.com" class="quick-link">
+                    <span class="icon">💻</span>
+                    <span>GitHub</span>
+                </a>
+            </div>
+        </div>
+        
+        <div class="info-section">
+            <div class="info-card">
+                <h4>🔒 Secure</h4>
+                <p>All traffic is encrypted and proxied through our servers</p>
+            </div>
+            <div class="info-card">
+                <h4>⚡ Fast</h4>
+                <p>Optimized for speed with minimal latency</p>
+            </div>
+            <div class="info-card">
+                <h4>🌍 Access</h4>
+                <p>Bypass restrictions and access content freely</p>
+            </div>
+        </div>
+        
+        <footer>
+            <p>Ultraviolet Proxy Clone - Python Edition</p>
+        </footer>
+    </div>
+    
+    <script>
+        // Register Service Worker on the main page
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/static/sw.js', {
+                scope: '/'
+            }).then(function(registration) {
+                console.log('[UV] Service Worker registered with scope:', registration.scope);
+            }).catch(function(error) {
+                console.error('[UV] Service Worker registration failed:', error);
+            });
+        }
+    </script>
+    <script src="/static/script.js"></script>
+</body>
+</html>
