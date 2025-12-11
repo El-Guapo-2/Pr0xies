@@ -94,6 +94,19 @@ def create_app(config: Optional[UVConfig] = None) -> Flask:
         """Serve the main page"""
         return render_template('index.html', config=config)
     
+    @app.route('/debug-headers')
+    def debug_headers():
+        """Debug endpoint to see what headers are received"""
+        import json
+        headers_info = {
+            'Host': request.host,
+            'X-Forwarded-Host': request.headers.get('X-Forwarded-Host'),
+            'X-Forwarded-Proto': request.headers.get('X-Forwarded-Proto'),
+            'X-Forwarded-Port': request.headers.get('X-Forwarded-Port'),
+            'X-Forwarded-For': request.headers.get('X-Forwarded-For'),
+        }
+        return f"<pre>{json.dumps(headers_info, indent=2)}</pre>"
+    
     @app.route('/uv/<path:filename>')
     def serve_uv_static(filename):
         """Serve UV static files"""
@@ -148,9 +161,23 @@ def create_app(config: Optional[UVConfig] = None) -> Flask:
             
             # Determine proxy origin - handle Codespaces/reverse proxy environments
             # Check for forwarded headers first (used by Codespaces, nginx, etc.)
-            forwarded_proto = request.headers.get('X-Forwarded-Proto', request.scheme)
-            forwarded_host = request.headers.get('X-Forwarded-Host', request.host)
-            proxy_origin = f"{forwarded_proto}://{forwarded_host}"
+            forwarded_proto = request.headers.get('X-Forwarded-Proto')
+            forwarded_host = request.headers.get('X-Forwarded-Host')
+            
+            if forwarded_host:
+                # When behind a reverse proxy (Codespaces, nginx, etc.), use forwarded headers
+                # Strip port from forwarded_host if present (e.g., "host:443" -> "host")
+                # But be careful: only strip if what's after : is a port number
+                if ':' in forwarded_host:
+                    host_part, port_part = forwarded_host.rsplit(':', 1)
+                    # Only strip if port_part is numeric (it's actually a port)
+                    if port_part.isdigit():
+                        forwarded_host = host_part
+                proto = forwarded_proto or 'https'
+                proxy_origin = f"{proto}://{forwarded_host}"
+            else:
+                # Direct access - use request host which includes port
+                proxy_origin = f"{request.scheme}://{request.host}"
             
             # Set up metadata
             uv.meta['url'] = original_url

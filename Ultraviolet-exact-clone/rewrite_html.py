@@ -322,7 +322,9 @@ class HTMLRewriter:
         while soup.parent:
             soup = soup.parent
         
-        for item in inject_items:
+        # Reverse the list so when we insert at position 0, the order is preserved
+        # (last item in list becomes first in HTML after all insertions)
+        for item in reversed(inject_items):
             tag_name = item.get('tagName', item.get('nodeName', 'script'))
             attrs = item.get('attrs', [])
             child_nodes = item.get('childNodes', [])
@@ -395,8 +397,16 @@ def create_html_inject(handler_script: str, bundle_script: str, client_script: s
     """
     Create HTML elements to inject into the head.
     Mirrors the JavaScript createHtmlInject function.
+    
+    Order is critical:
+    1. Cookies/referrer inline script (sets globals)
+    2. Bundle (defines Ultraviolet class with codecs)
+    3. Config (uses Ultraviolet.codec to set __uv$config)
+    4. Client (defines UVClient class)
+    5. Handler (initializes everything, applies hooks)
     """
     return [
+        # 1. Cookies/referrer inline script
         {
             'tagName': 'script',
             'nodeName': 'script',
@@ -410,6 +420,7 @@ def create_html_inject(handler_script: str, bundle_script: str, client_script: s
                 {'name': '__uv-script', 'value': '1', 'skip': True}
             ]
         },
+        # 2. Bundle (defines Ultraviolet class)
         {
             'tagName': 'script',
             'nodeName': 'script',
@@ -419,15 +430,7 @@ def create_html_inject(handler_script: str, bundle_script: str, client_script: s
                 {'name': '__uv-script', 'value': '1', 'skip': True}
             ]
         },
-        {
-            'tagName': 'script',
-            'nodeName': 'script',
-            'childNodes': [],
-            'attrs': [
-                {'name': 'src', 'value': client_script, 'skip': True},
-                {'name': '__uv-script', 'value': '1', 'skip': True}
-            ]
-        },
+        # 3. Config (uses Ultraviolet.codec)
         {
             'tagName': 'script',
             'nodeName': 'script',
@@ -437,6 +440,17 @@ def create_html_inject(handler_script: str, bundle_script: str, client_script: s
                 {'name': '__uv-script', 'value': '1', 'skip': True}
             ]
         },
+        # 4. Client (defines UVClient)
+        {
+            'tagName': 'script',
+            'nodeName': 'script',
+            'childNodes': [],
+            'attrs': [
+                {'name': 'src', 'value': client_script, 'skip': True},
+                {'name': '__uv-script', 'value': '1', 'skip': True}
+            ]
+        },
+        # 5. Handler (uses Ultraviolet and UVClient)
         {
             'tagName': 'script',
             'nodeName': 'script',
